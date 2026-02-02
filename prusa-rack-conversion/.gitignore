@@ -29,3 +29,10 @@ __pycache__/
 # Temporary files
 *.tmp
 *.temp
+
+# Printables upload package (convenience copies)
+printables/*.stl
+printables/*.FCStd
+printables/*.py
+printables/*.png
+printables/*.jpg
