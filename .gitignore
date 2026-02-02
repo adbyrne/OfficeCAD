@@ -1,0 +1,38 @@
+# Downloaded reference models (not original work, potential licensing issues)
+reference_models/
+
+# FreeCAD backup files
+*.FCBak
+*.FCStd1
+*_backup*.FCStd
+
+# Development artifacts
+SESSION_STATE.md
+FIX_PLAN*.md
+diagnostic_script*.py
+fix_brackets*.py
+bracket_tools.py
+
+# Old/deprecated directories (use freecad/ and stl/ instead)
+freecad_files/
+printed_files/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+
+# Temporary files
+*.tmp
+*.temp
