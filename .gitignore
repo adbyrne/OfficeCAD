@@ -6,16 +6,17 @@ reference_models/
 *.FCStd1
 *_backup*.FCStd
 
-# Development artifacts
+# Session/development artifacts
 SESSION_STATE.md
+NEXT_SESSION_PLAN.md
 FIX_PLAN*.md
 diagnostic_script*.py
 fix_brackets*.py
 bracket_tools.py
 
-# Old/deprecated directories (use freecad/ and stl/ instead)
-freecad_files/
-printed_files/
+# Deprecated directories in prusa-rack-conversion (uses freecad/ and stl/)
+/prusa-rack-conversion/freecad_files/
+/prusa-rack-conversion/printed_files/
 
 # OS files
 .DS_Store
