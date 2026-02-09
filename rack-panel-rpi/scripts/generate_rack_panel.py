@@ -65,6 +65,18 @@ RAIL_HOLE_OUTER_DIA = 4.6      # Top and bottom holes
 RAIL_HOLE_SPACING = 16.0       # Between center and outer holes
 RAIL_HOLE_CENTER_Y = RACK_1U_HEIGHT / 2  # 22.225mm
 
+# Side bar retention system
+SIDEBAR_WIDTH = 8.0             # Bar width (X direction)
+SIDEBAR_HEIGHT = 36.0           # Bar height (Y direction, fits in 36.45mm interior)
+SIDEBAR_DEPTH = 12.0            # Bar depth (Z direction, centered in wall depth)
+SIDEBAR_NUT_AF = 5.5            # M3 hex nut across-flats
+SIDEBAR_NUT_RECESS_DEPTH = 2.5  # Hex recess depth on top/bottom faces
+WALL_SLOT_LENGTH = 12.0         # X-direction elongation for adjustment
+WALL_SLOT_WIDTH = 3.4           # Z-direction (M3 clearance)
+WALL_SLOT_Z_CENTER = 12.0       # Z center of slots (centered in wall depth Z=4..18)
+# Slot X positions: between side walls and boxes, one per bar position
+WALL_SLOT_X_CENTERS = [31.0, 101.0, 115.0, 185.0]
+
 # Fillets
 WALL_FILLET_RADIUS = 2.0       # Wall-to-faceplate inside corners
 
@@ -73,6 +85,7 @@ TOTAL_DEPTH = LIP_DEPTH + FACE_PLATE_THICKNESS + SHELF_DEPTH  # 41mm
 TAB_TOTAL_WIDTH = TAB_RAIL_WIDTH + TAB_OVERLAP_WIDTH  # 27mm
 RAIL_HOLE_X_CENTER = -(TAB_RAIL_WIDTH / 2)  # Centered in rail section
 HEX_CIRCUMRADIUS = NUT_ACROSS_FLATS / (2 * math.cos(math.radians(30)))
+SIDEBAR_HEX_CIRCUMRADIUS = SIDEBAR_NUT_AF / (2 * math.cos(math.radians(30)))
 
 
 # ─── FreeCAD execution helpers ───────────────────────────────────────────────
@@ -379,6 +392,184 @@ _result_ = {{"fillets": len(fillet_edges)}}
     print("  Center panel complete.")
 
 
+def add_wall_slots(proxy):
+    """Add side bar retention slots to top and bottom walls of center panel."""
+    slot_x_str = repr(WALL_SLOT_X_CENTERS)
+    execute(proxy, f"""
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+body = doc.getObject("CenterPanelBody")
+tip = body.Tip
+
+# Find top outer face (Y=44.45, normal +Y, full panel extent)
+top_face = None
+for i, face in enumerate(tip.Shape.Faces):
+    normal = face.normalAt(0, 0)
+    if abs(normal.y - 1.0) < 0.01:
+        bb = face.BoundBox
+        if abs(bb.YMin - {RACK_1U_HEIGHT}) < 0.01 and bb.XMax - bb.XMin > 200:
+            top_face = f"Face{{i+1}}"
+            break
+
+# Create sketch on top outer face
+# UV mapping: u_axis = -X, v_axis = +Z, origin at (0, 44.45, 0)
+sketch = body.newObject("Sketcher::SketchObject", "TopSlotSketch")
+sketch.AttachmentSupport = [(tip, top_face)]
+sketch.MapMode = "FlatFace"
+doc.recompute()
+
+slot_length = {WALL_SLOT_LENGTH}
+slot_width = {WALL_SLOT_WIDTH}
+z_center = {WALL_SLOT_Z_CENTER}
+
+for gx in {slot_x_str}:
+    # Convert global X to sketch u (u = -global_x)
+    su_left = -(gx + slot_length / 2)
+    su_right = su_left + slot_length
+    sv_bottom = z_center - slot_width / 2
+    sv_top = sv_bottom + slot_width
+
+    g0 = sketch.addGeometry(Part.LineSegment(
+        FreeCAD.Vector(su_left, sv_bottom, 0), FreeCAD.Vector(su_right, sv_bottom, 0)))
+    g1 = sketch.addGeometry(Part.LineSegment(
+        FreeCAD.Vector(su_right, sv_bottom, 0), FreeCAD.Vector(su_right, sv_top, 0)))
+    g2 = sketch.addGeometry(Part.LineSegment(
+        FreeCAD.Vector(su_right, sv_top, 0), FreeCAD.Vector(su_left, sv_top, 0)))
+    g3 = sketch.addGeometry(Part.LineSegment(
+        FreeCAD.Vector(su_left, sv_top, 0), FreeCAD.Vector(su_left, sv_bottom, 0)))
+
+    sketch.addConstraint(Sketcher.Constraint("Coincident", g0, 2, g1, 1))
+    sketch.addConstraint(Sketcher.Constraint("Coincident", g1, 2, g2, 1))
+    sketch.addConstraint(Sketcher.Constraint("Coincident", g2, 2, g3, 1))
+    sketch.addConstraint(Sketcher.Constraint("Coincident", g3, 2, g0, 1))
+
+    sketch.addConstraint(Sketcher.Constraint("Horizontal", g0))
+    sketch.addConstraint(Sketcher.Constraint("Horizontal", g2))
+    sketch.addConstraint(Sketcher.Constraint("Vertical", g1))
+    sketch.addConstraint(Sketcher.Constraint("Vertical", g3))
+
+    sketch.addConstraint(Sketcher.Constraint("DistanceX", g0, 1, g0, 2, slot_length))
+    sketch.addConstraint(Sketcher.Constraint("DistanceY", g1, 1, g1, 2, slot_width))
+
+    sketch.addConstraint(Sketcher.Constraint("DistanceX", -1, 1, g0, 1, su_left))
+    sketch.addConstraint(Sketcher.Constraint("DistanceY", -1, 1, g0, 1, sv_bottom))
+
+doc.recompute()
+
+# ThroughAll pocket from top face cuts through both top and bottom walls
+pocket = body.newObject("PartDesign::Pocket", "TopSlotPocket")
+pocket.Profile = sketch
+pocket.Type = 1
+pocket.Refine = True
+doc.recompute()
+_result_ = {{"slots": len({slot_x_str}), "fully_constrained": sketch.FullyConstrained}}
+""")
+    print("  Wall slots complete.")
+
+
+def build_side_bar(proxy):
+    """Build the side bar body (print 4 copies)."""
+    execute(proxy, f"""
+import Part, Sketcher, math
+doc = FreeCAD.ActiveDocument
+body = doc.addObject("PartDesign::Body", "SideBarBody")
+body.Label = "SideBarBody"
+doc.recompute()
+
+# Base sketch on XY plane
+sketch = body.newObject("Sketcher::SketchObject", "SideBarBaseSketch")
+sketch.AttachmentSupport = [(body.Origin.getObject("XY_Plane"), "")]
+sketch.MapMode = "FlatFace"
+doc.recompute()
+
+w = {SIDEBAR_WIDTH}
+h = {SIDEBAR_HEIGHT}
+g0 = sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(0,0,0), FreeCAD.Vector(w,0,0)))
+g1 = sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(w,0,0), FreeCAD.Vector(w,h,0)))
+g2 = sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(w,h,0), FreeCAD.Vector(0,h,0)))
+g3 = sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(0,h,0), FreeCAD.Vector(0,0,0)))
+sketch.addConstraint(Sketcher.Constraint("Coincident", g0, 2, g1, 1))
+sketch.addConstraint(Sketcher.Constraint("Coincident", g1, 2, g2, 1))
+sketch.addConstraint(Sketcher.Constraint("Coincident", g2, 2, g3, 1))
+sketch.addConstraint(Sketcher.Constraint("Coincident", g3, 2, g0, 1))
+sketch.addConstraint(Sketcher.Constraint("Horizontal", g0))
+sketch.addConstraint(Sketcher.Constraint("Horizontal", g2))
+sketch.addConstraint(Sketcher.Constraint("Vertical", g1))
+sketch.addConstraint(Sketcher.Constraint("Vertical", g3))
+sketch.addConstraint(Sketcher.Constraint("DistanceX", g0, 1, g0, 2, w))
+sketch.addConstraint(Sketcher.Constraint("DistanceY", g1, 1, g1, 2, h))
+sketch.addConstraint(Sketcher.Constraint("Coincident", g0, 1, -1, 1))
+doc.recompute()
+
+pad = body.newObject("PartDesign::Pad", "SideBarPad")
+pad.Profile = sketch
+pad.Length = {SIDEBAR_DEPTH}
+pad.Refine = True
+doc.recompute()
+
+# Hex nut recesses on top and bottom faces
+hex_r = {SIDEBAR_HEX_CIRCUMRADIUS}
+cx_bar = w / 2.0      # Center of bar width
+cz_bar = {SIDEBAR_DEPTH} / 2.0  # Center of bar depth
+
+for face_label, face_name in [("Top", None), ("Bottom", None)]:
+    # Find appropriate face
+    for fi, face in enumerate(body.Tip.Shape.Faces):
+        normal = face.normalAt(0, 0)
+        bb = face.BoundBox
+        if face_label == "Top" and abs(normal.y - 1.0) < 0.01 and abs(bb.YMin - h) < 0.01:
+            face_name = f"Face{{fi+1}}"
+            break
+        if face_label == "Bottom" and abs(normal.y + 1.0) < 0.01 and abs(bb.YMax) < 0.01:
+            face_name = f"Face{{fi+1}}"
+            break
+
+    sk = body.newObject("Sketcher::SketchObject", f"{{face_label}}NutRecessSketch")
+    sk.AttachmentSupport = [(body.Tip, face_name)]
+    sk.MapMode = "FlatFace"
+    doc.recompute()
+
+    # Determine hex center in sketch coordinates
+    placement = sk.getGlobalPlacement()
+    rot = placement.Rotation
+    u_axis = rot.multVec(FreeCAD.Vector(1, 0, 0))
+    origin = placement.Base
+
+    # Map global center (cx_bar, face_y, cz_bar) to sketch (u, v)
+    # For top face: u=-X, v=+Z -> su = -cx_bar, sv = cz_bar
+    # For bottom face: u=+X, v=+Z -> su = cx_bar, sv = cz_bar
+    if abs(u_axis.x + 1.0) < 0.01:  # u = -X (top face)
+        su = -cx_bar
+    else:  # u = +X (bottom face)
+        su = cx_bar
+    sv = cz_bar
+
+    angles = [30, 90, 150, 210, 270, 330]
+    vertices = []
+    for a in angles:
+        rad = math.radians(a)
+        vertices.append(FreeCAD.Vector(su + hex_r * math.cos(rad), sv + hex_r * math.sin(rad), 0))
+    geo_indices = []
+    for i in range(6):
+        j = (i + 1) % 6
+        g = sk.addGeometry(Part.LineSegment(vertices[i], vertices[j]))
+        geo_indices.append(g)
+    for i in range(6):
+        j = (i + 1) % 6
+        sk.addConstraint(Sketcher.Constraint("Coincident", geo_indices[i], 2, geo_indices[j], 1))
+    doc.recompute()
+
+    pocket = body.newObject("PartDesign::Pocket", f"{{face_label}}NutRecessPocket")
+    pocket.Profile = sk
+    pocket.Length = {SIDEBAR_NUT_RECESS_DEPTH}
+    pocket.Refine = True
+    doc.recompute()
+
+_result_ = {{"ok": True, "volume": round(body.Tip.Shape.Volume, 2)}}
+""")
+    print("  Side bar complete (print 4 copies).")
+
+
 def build_left_tab(proxy):
     """Steps 8-10: Build the left end tab."""
     li = LIP_INSET
@@ -539,11 +730,12 @@ doc = FreeCAD.ActiveDocument
 output_dir = "{output_dir}"
 for name, label in [("CenterPanelBody", "CenterPanel"),
                      ("LeftTabBody", "LeftTab"),
-                     ("RightTabBody", "RightTab")]:
+                     ("RightTabBody", "RightTab"),
+                     ("SideBarBody", "SideBar")]:
     obj = doc.getObject(name)
     mesh = MeshPart.meshFromShape(Shape=obj.Shape, LinearDeflection=0.1, AngularDeflection=0.5)
     mesh.write(f"{{output_dir}}/{{label}}.stl")
-_result_ = {{"exported": 3}}
+_result_ = {{"exported": 4}}
 """)
     print(f"  STLs exported to {output_dir}")
 
@@ -594,20 +786,26 @@ def main():
     print("2. Building center panel...")
     build_center_panel(proxy)
 
-    print("3. Building left end tab...")
+    print("3. Adding side bar retention slots...")
+    add_wall_slots(proxy)
+
+    print("4. Building side bar (print 4x)...")
+    build_side_bar(proxy)
+
+    print("5. Building left end tab...")
     build_left_tab(proxy)
 
-    print("4. Building right end tab (mirror)...")
+    print("6. Building right end tab (mirror)...")
     build_right_tab(proxy)
 
-    print("5. Saving document...")
+    print("7. Saving document...")
     save_document(proxy, args.fcstd_path)
 
     if not args.no_export:
-        print("6. Exporting STLs...")
+        print("8. Exporting STLs...")
         export_stls(proxy, args.output_dir)
 
-    print("\nDone! Three-piece rack panel generated successfully.")
+    print("\nDone! Rack panel with side bar retention generated successfully.")
     print(f"  FreeCAD: {args.fcstd_path}")
     if not args.no_export:
         print(f"  STLs:    {args.output_dir}/")
