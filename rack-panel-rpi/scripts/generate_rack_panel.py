@@ -69,8 +69,11 @@ RAIL_HOLE_CENTER_Y = RACK_1U_HEIGHT / 2  # 22.225mm
 SIDEBAR_WIDTH = 8.0             # Bar width (X direction)
 SIDEBAR_HEIGHT = 36.0           # Bar height (Y direction, fits in 36.45mm interior)
 SIDEBAR_DEPTH = 12.0            # Bar depth (Z direction, centered in wall depth)
-SIDEBAR_NUT_AF = 5.5            # M3 hex nut across-flats
-SIDEBAR_NUT_RECESS_DEPTH = 2.5  # Hex recess depth on top/bottom faces
+SIDEBAR_NUT_AF = 5.5            # M3 square nut across-flats (DIN 562)
+SIDEBAR_NUT_THICKNESS = 1.8     # M3 square nut thickness (DIN 562)
+SIDEBAR_NUT_POCKET_SIZE = 5.8   # Pocket width (nut AF + 0.3mm clearance)
+SIDEBAR_NUT_POCKET_DEPTH = 2.0  # Pocket depth (nut thickness + 0.2mm clearance)
+SIDEBAR_NUT_RETAINING = 2.0     # Material over nut pocket (retaining layer)
 WALL_SLOT_LENGTH = 12.0         # X-direction elongation for adjustment
 WALL_SLOT_WIDTH = 3.4           # Z-direction (M3 clearance)
 WALL_SLOT_Z_CENTER = 12.0       # Z center of slots (centered in wall depth Z=4..18)
@@ -85,7 +88,6 @@ TOTAL_DEPTH = LIP_DEPTH + FACE_PLATE_THICKNESS + SHELF_DEPTH  # 41mm
 TAB_TOTAL_WIDTH = TAB_RAIL_WIDTH + TAB_OVERLAP_WIDTH  # 27mm
 RAIL_HOLE_X_CENTER = -(TAB_RAIL_WIDTH / 2)  # Centered in rail section
 HEX_CIRCUMRADIUS = NUT_ACROSS_FLATS / (2 * math.cos(math.radians(30)))
-SIDEBAR_HEX_CIRCUMRADIUS = SIDEBAR_NUT_AF / (2 * math.cos(math.radians(30)))
 
 
 # ─── FreeCAD execution helpers ───────────────────────────────────────────────
@@ -507,62 +509,88 @@ pad.Length = {SIDEBAR_DEPTH}
 pad.Refine = True
 doc.recompute()
 
-# Hex nut recesses on top and bottom faces
-hex_r = {SIDEBAR_HEX_CIRCUMRADIUS}
-cx_bar = w / 2.0      # Center of bar width
-cz_bar = {SIDEBAR_DEPTH} / 2.0  # Center of bar depth
+# Square nut traps on top and bottom faces (slide-in from Z=0 edge)
+# Nut pocket is recessed below the surface with a retaining layer + screw hole
+nut_pocket_w = {SIDEBAR_NUT_POCKET_SIZE}
+nut_pocket_d = {SIDEBAR_NUT_POCKET_DEPTH}
+retaining = {SIDEBAR_NUT_RETAINING}
+screw_r = {M3_CLEARANCE_RADIUS}
+cx_bar = w / 2.0
+cz_bar = {SIDEBAR_DEPTH} / 2.0
+half_nut = nut_pocket_w / 2.0
 
-for face_label, face_name in [("Top", None), ("Bottom", None)]:
-    # Find appropriate face
-    for fi, face in enumerate(body.Tip.Shape.Faces):
-        normal = face.normalAt(0, 0)
+# Pocket bounds in global coordinates
+x_min = cx_bar - half_nut  # 1.1mm
+x_max = cx_bar + half_nut  # 6.9mm
+z_min = 0.0                # Open edge (nut slides in from here)
+z_max = cz_bar + half_nut  # 8.9mm (closed end)
+
+def find_y_face(body_obj, label, bar_h):
+    for fi, face in enumerate(body_obj.Tip.Shape.Faces):
+        n = face.normalAt(0, 0)
         bb = face.BoundBox
-        if face_label == "Top" and abs(normal.y - 1.0) < 0.01 and abs(bb.YMin - h) < 0.01:
-            face_name = f"Face{{fi+1}}"
-            break
-        if face_label == "Bottom" and abs(normal.y + 1.0) < 0.01 and abs(bb.YMax) < 0.01:
-            face_name = f"Face{{fi+1}}"
-            break
+        if label == "Top" and abs(n.y - 1.0) < 0.01 and abs(bb.YMin - bar_h) < 0.01:
+            return f"Face{{fi+1}}"
+        if label == "Bottom" and abs(n.y + 1.0) < 0.01 and abs(bb.YMax) < 0.01:
+            return f"Face{{fi+1}}"
+    return None
 
-    sk = body.newObject("Sketcher::SketchObject", f"{{face_label}}NutRecessSketch")
-    sk.AttachmentSupport = [(body.Tip, face_name)]
+def get_u_flip(sketch_obj):
+    p = sketch_obj.getGlobalPlacement()
+    u = p.Rotation.multVec(FreeCAD.Vector(1, 0, 0))
+    return abs(u.x + 1.0) < 0.01
+
+for face_label in ["Top", "Bottom"]:
+    # --- Nut pocket (recessed below surface by retaining layer) ---
+    fn = find_y_face(body, face_label, h)
+    sk = body.newObject("Sketcher::SketchObject", f"{{face_label}}NutTrapSketch")
+    sk.AttachmentSupport = [(body.Tip, fn)]
     sk.MapMode = "FlatFace"
+    sk.AttachmentOffset = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, -retaining), FreeCAD.Rotation(0, 0, 0))
     doc.recompute()
 
-    # Determine hex center in sketch coordinates
-    placement = sk.getGlobalPlacement()
-    rot = placement.Rotation
-    u_axis = rot.multVec(FreeCAD.Vector(1, 0, 0))
-    origin = placement.Base
+    if get_u_flip(sk):
+        su_min, su_max = -x_max, -x_min
+    else:
+        su_min, su_max = x_min, x_max
+    sv_min, sv_max = z_min, z_max
 
-    # Map global center (cx_bar, face_y, cz_bar) to sketch (u, v)
-    # For top face: u=-X, v=+Z -> su = -cx_bar, sv = cz_bar
-    # For bottom face: u=+X, v=+Z -> su = cx_bar, sv = cz_bar
-    if abs(u_axis.x + 1.0) < 0.01:  # u = -X (top face)
-        su = -cx_bar
-    else:  # u = +X (bottom face)
-        su = cx_bar
-    sv = cz_bar
-
-    angles = [30, 90, 150, 210, 270, 330]
-    vertices = []
-    for a in angles:
-        rad = math.radians(a)
-        vertices.append(FreeCAD.Vector(su + hex_r * math.cos(rad), sv + hex_r * math.sin(rad), 0))
-    geo_indices = []
-    for i in range(6):
-        j = (i + 1) % 6
-        g = sk.addGeometry(Part.LineSegment(vertices[i], vertices[j]))
-        geo_indices.append(g)
-    for i in range(6):
-        j = (i + 1) % 6
-        sk.addConstraint(Sketcher.Constraint("Coincident", geo_indices[i], 2, geo_indices[j], 1))
+    pts = [FreeCAD.Vector(su_min, sv_min, 0), FreeCAD.Vector(su_max, sv_min, 0),
+           FreeCAD.Vector(su_max, sv_max, 0), FreeCAD.Vector(su_min, sv_max, 0)]
+    for i in range(4):
+        sk.addGeometry(Part.LineSegment(pts[i], pts[(i+1)%4]), False)
+    for i in range(4):
+        sk.addConstraint(Sketcher.Constraint("Coincident", i, 2, (i+1)%4, 1))
     doc.recompute()
 
-    pocket = body.newObject("PartDesign::Pocket", f"{{face_label}}NutRecessPocket")
+    pocket = body.newObject("PartDesign::Pocket", f"{{face_label}}NutTrapPocket")
     pocket.Profile = sk
-    pocket.Length = {SIDEBAR_NUT_RECESS_DEPTH}
+    pocket.Length = nut_pocket_d
     pocket.Refine = True
+    doc.recompute()
+
+    # --- Screw access hole (through retaining layer to reach nut) ---
+    fn2 = find_y_face(body, face_label, h)
+    sk2 = body.newObject("Sketcher::SketchObject", f"{{face_label}}ScrewHoleSketch")
+    sk2.AttachmentSupport = [(body.Tip, fn2)]
+    sk2.MapMode = "FlatFace"
+    doc.recompute()
+
+    if get_u_flip(sk2):
+        su_c = -cx_bar
+    else:
+        su_c = cx_bar
+    sv_c = cz_bar
+
+    sk2.addGeometry(Part.Circle(
+        FreeCAD.Vector(su_c, sv_c, 0), FreeCAD.Vector(0, 0, 1), screw_r), False)
+    doc.recompute()
+
+    pocket2 = body.newObject("PartDesign::Pocket", f"{{face_label}}ScrewHolePocket")
+    pocket2.Profile = sk2
+    pocket2.Length = retaining
+    pocket2.Refine = True
     doc.recompute()
 
 _result_ = {{"ok": True, "volume": round(body.Tip.Shape.Volume, 2)}}
