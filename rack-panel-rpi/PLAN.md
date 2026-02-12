@@ -441,7 +441,7 @@ These questions will be resolved after initial CAD model review:
 ## Reference Links
 
 - Previous project: `/home/abyrne/Projects/Office/cad/prusa-rack-conversion/`
-- MCP reference: `/home/abyrne/Projects/Office/GENERATED_MCP_REFERENCE.md`
+- MCP reference: `/home/abyrne/Projects/GENERATED_MCP_REFERENCE.md`
 - Reference models: `/home/abyrne/Projects/Office/cad/reference_models/` (includes Pi holders)
 
 ---

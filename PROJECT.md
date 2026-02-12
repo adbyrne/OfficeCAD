@@ -5,7 +5,7 @@ This directory contains Computer-Aided Design (CAD) projects, primarily using Fr
 ## Software
 
 *   **CAD Software:** [FreeCAD](https://www.freecadweb.org/)
-    *   Use the [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that enables integration between AI assistants  (Claude, GPT, and other MCP-compatible tools) and [FreeCAD](https://www.freecadweb.org/), allowing AI-assisted development and debugging of 3D models, macros, and workbenches. (repo copy at /home/abyrne/Projects/Office/freecad-robust-mcp-and-more-main)
+    *   Use the [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that enables integration between AI assistants  (Claude, GPT, and other MCP-compatible tools) and [FreeCAD](https://www.freecadweb.org/), allowing AI-assisted development and debugging of 3D models, macros, and workbenches. (repo copy at /home/abyrne/Projects/freecad-robust-mcp-and-more-main)
     * FreeCAD supports Python use internally, see [FreeCAD_Scripting_Basics][https://wiki.freecad.org/FreeCAD_Scripting_Basics]
 
 *   **3D Printer Slicer:** [PrusaSlicer](https://www.prusa3d.com/page/prusaslicer_424/)
